@@ -72,6 +72,17 @@ public class WineArcadeView extends View {
         handler.post(loop);
     }
 
+    public boolean needsFlipRestore() {
+        if (screen == LAB) return lab.getPage() == 2 || lab.getPage() == 5;
+        if (screen != GAME) return false;
+        Game g = engine.getGame();
+        return g instanceof FlipFishingGame ||
+               g instanceof FlipReactionGame ||
+               g instanceof FlipMemoryGame ||
+               g instanceof VaultPhoneGame ||
+               g instanceof PocketSignalGame;
+    }
+
     public GameEngine getEngine(){return engine;}
     public SoundManager getSound(){return sound;}
 

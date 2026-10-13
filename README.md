@@ -99,3 +99,30 @@ Device Lab 실행 후 아래 로그를 공유하면 F480K에 맞게 FlipDetector
 - 폴더를 닫아 화면이 꺼진 뒤에도 ACTION_SCREEN_ON을 받을 수 있게 onDestroy에서만 해제합니다.
 - PARTIAL_WAKE_LOCK은 화면 OFF 중 Flip 게임의 랜덤 대기/진동이 멈추지 않도록 사용합니다.
 - Home 등 화면이 켜진 일반 백그라운드 이동에서는 wake lock을 해제해 불필요한 배터리 소모를 줄입니다.
+
+
+# F480K Launcher 복귀 대응 수정
+
+F480K 실기에서 폴더 CLOSE 후 Activity가 뒤로 가고, OPEN 시 Launcher가 앞에 오는 현상을 보정합니다.
+
+- MainActivity: launchMode=singleTask
+- FlipKeepAliveService 추가
+- Flip 게임/Device Lab Flip Test가 활성화된 경우에만 restore ARM
+- SCREEN_ON 수신 시 기존 MainActivity를 REORDER_TO_FRONT
+- 기존 GameEngine 인스턴스와 Flip 게임 상태를 유지
+- 일반 Home 이동은 자동 복귀하지 않음
+
+테스트 순서:
+1. 1 FLIP GAMES → 2 FLIP REACTION
+2. 폴더 닫기
+3. 진동 기다리기
+4. 폴더 열기
+5. Wine Arcade X가 자동 복귀하고 반응시간이 표시되는지 확인
+6. 성공하면 Flip Fishing도 동일하게 테스트
+
+
+## 복귀 ARM 타이밍 보강
+F480K에서 onPause와 실제 SCREEN_OFF 순서가 일정하지 않을 가능성을 고려해,
+Flip 게임을 선택하는 순간부터 FlipKeepAliveService를 ARM합니다.
+메뉴로 복귀하거나 화면이 켜진 상태에서 Home/다른 앱으로 이동하면 DISARM합니다.
+따라서 onPause 타이밍 레이스에 덜 민감합니다.
