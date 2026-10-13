@@ -36,9 +36,10 @@ public class MainMenuView {
         text(c,p,"3  SIGNAL GAMES",28,279,18,false);
         text(c,p,"4  CLASSIC",28,311,18,false);
         text(c,p,"5  RECORD",28,343,18,false);
-        text(c,p,"6  DEVICE LAB",28,375,18,false);
-        text(c,p,"9  EGSAVE WEB",28,407,18,false);
+        text(c,p,"6  DEVICE LAB",28,365,17,false);
+        text(c,p,"7  LUCKY ROULETTE",28,395,17,false);
+        text(c,p,"9  EGSAVE WEB",28,425,17,false);
 
-        text(c,p,"0 EXIT",w/2f,h-22,14,true);
+        text(c,p,"0 EXIT",w-42,h-10,11,true);
     }
 }

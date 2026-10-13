@@ -154,3 +154,35 @@ Flip 게임을 선택하는 순간부터 FlipKeepAliveService를 ARM합니다.
 F480K의 Android 4.4 WebView는 매우 오래된 Chromium 엔진입니다.
 사이트가 최신 JavaScript 문법/API만 사용하는 경우 웹 서버/프론트엔드의
 Legacy WebView 호환 처리가 추가로 필요할 수 있습니다.
+
+
+# 7번 메뉴 — LUCKY ROULETTE
+
+메인 메뉴에서 `7`을 누르면 실행됩니다.
+
+## 조작
+- `5` 또는 중앙 OK : SPIN
+- `BACK` : 메인 메뉴
+
+## 룰
+현금, 결제, 베팅, 환전 기능은 없습니다.
+Wine Arcade X의 게임 내 Coin 보너스만 지급합니다.
+
+보상:
+- +5
+- +10
+- +20
+- +30
+- +50
+- BONUS +75
+- +100
+- MISS
+
+## 기능
+- Canvas 8분할 룰렛
+- cubic ease-out 감속 회전
+- 진동 / ToneGenerator 효과음
+- Wine Coin 연동
+- 최고 당첨 기록 저장
+- 총 회전 횟수 저장
+- Android 4.4 / API 19

@@ -20,6 +20,7 @@ import com.winearcade.device.KeyInputManager;
 import com.winearcade.device.SoundManager;
 import com.winearcade.device.VibrationManager;
 import com.winearcade.games.classic.ClassicHubGame;
+import com.winearcade.games.bonus.RouletteGame;
 import com.winearcade.games.flip.FlipFishingGame;
 import com.winearcade.games.flip.FlipMemoryGame;
 import com.winearcade.games.flip.FlipReactionGame;
@@ -147,6 +148,7 @@ public class WineArcadeView extends View {
             if(k==KeyEvent.KEYCODE_4){startGame(new ClassicHubGame(save,score,vibration,sound));return true;}
             if(k==KeyEvent.KEYCODE_5){screen=RECORD;return true;}
             if(k==KeyEvent.KEYCODE_6){lab.reset();screen=LAB;return true;}
+            if(k==KeyEvent.KEYCODE_7){startGame(new RouletteGame(save,score,vibration,sound));return true;}
             if(k==KeyEvent.KEYCODE_9){
                 Intent web = new Intent(getContext(), EgsaveWebViewActivity.class);
                 getContext().startActivity(web);

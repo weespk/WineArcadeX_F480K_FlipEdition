@@ -8,8 +8,8 @@ android {
         applicationId "com.winearcade"
         minSdk 19
         targetSdk 28
-        versionCode 2
-        versionName "1.1-webview9"
+        versionCode 3
+        versionName "1.2-roulette"
     }
 
     compileOptions {
