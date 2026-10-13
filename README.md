@@ -126,3 +126,31 @@ F480K에서 onPause와 실제 SCREEN_OFF 순서가 일정하지 않을 가능성
 Flip 게임을 선택하는 순간부터 FlipKeepAliveService를 ARM합니다.
 메뉴로 복귀하거나 화면이 켜진 상태에서 Home/다른 앱으로 이동하면 DISARM합니다.
 따라서 onPause 타이밍 레이스에 덜 민감합니다.
+
+
+# 9번 메뉴 — EGSAVE WEB
+
+메인 화면에서 숫자키 `9`를 누르면 내부 WebView로 아래 주소를 엽니다.
+
+`https://egsave.com/ec/`
+
+## WebView 설정
+- Android 4.4 / API 19 WebView 사용
+- JavaScript 활성화
+- DOM Storage 활성화
+- Database Storage 활성화
+- 쿠키/세션 유지
+- 모바일 페이지 확대/축소 지원
+- HTTP/HTTPS 링크는 WebView 내부 이동
+- tel/mailto 등 외부 스킴은 해당 Android 앱으로 전달
+- 하드웨어 BACK: 웹 히스토리 → 더 이상 없으면 Wine Arcade X로 복귀
+- SSL 인증서 오류는 우회하지 않고 연결 취소
+
+## 권한 추가
+- INTERNET
+- ACCESS_NETWORK_STATE
+
+## 주의
+F480K의 Android 4.4 WebView는 매우 오래된 Chromium 엔진입니다.
+사이트가 최신 JavaScript 문법/API만 사용하는 경우 웹 서버/프론트엔드의
+Legacy WebView 호환 처리가 추가로 필요할 수 있습니다.

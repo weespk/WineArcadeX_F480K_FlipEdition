@@ -37,6 +37,7 @@ public class MainMenuView {
         text(c,p,"4  CLASSIC",28,311,18,false);
         text(c,p,"5  RECORD",28,343,18,false);
         text(c,p,"6  DEVICE LAB",28,375,18,false);
+        text(c,p,"9  EGSAVE WEB",28,407,18,false);
 
         text(c,p,"0 EXIT",w/2f,h-22,14,true);
     }

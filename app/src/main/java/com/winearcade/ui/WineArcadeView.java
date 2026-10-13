@@ -2,6 +2,7 @@ package com.winearcade.ui;
 
 import android.app.Activity;
 import android.content.Context;
+import android.content.Intent;
 import android.graphics.Canvas;
 import android.graphics.Paint;
 import android.os.Handler;
@@ -26,6 +27,7 @@ import com.winearcade.games.flip.VaultPhoneGame;
 import com.winearcade.games.keypad.RetroOperatorGame;
 import com.winearcade.games.keypad.SecretDialGame;
 import com.winearcade.games.signal.PocketSignalGame;
+import com.winearcade.web.EgsaveWebViewActivity;
 
 public class WineArcadeView extends View {
     private static final int MAIN=0, FLIP=1, KEYPAD=2, SIGNAL=3, RECORD=4, LAB=5, GAME=6;
@@ -145,6 +147,11 @@ public class WineArcadeView extends View {
             if(k==KeyEvent.KEYCODE_4){startGame(new ClassicHubGame(save,score,vibration,sound));return true;}
             if(k==KeyEvent.KEYCODE_5){screen=RECORD;return true;}
             if(k==KeyEvent.KEYCODE_6){lab.reset();screen=LAB;return true;}
+            if(k==KeyEvent.KEYCODE_9){
+                Intent web = new Intent(getContext(), EgsaveWebViewActivity.class);
+                getContext().startActivity(web);
+                return true;
+            }
             if(k==KeyEvent.KEYCODE_0){((Activity)getContext()).finish();return true;}
         }else if(screen==FLIP){
             if(k==KeyEvent.KEYCODE_1){startGame(new FlipFishingGame(save,score,vibration,sound));return true;}
