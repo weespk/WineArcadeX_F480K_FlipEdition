@@ -1,43 +1,180 @@
-name: Build APK
+name: Build Uploaded Android ZIP
 
 on:
-  workflow_dispatch:
   push:
-    branches: [ main ]
+    paths:
+      - 'upload/*.zip'
+
+  workflow_dispatch:
 
 jobs:
   build:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      # ---------------------------------------------------------
+      # 1. Repository checkout
+      # ---------------------------------------------------------
+      - name: Checkout repository
+        uses: actions/checkout@v6
 
-      - name: JDK 17
-        uses: actions/setup-java@v4
+      # ---------------------------------------------------------
+      # 2. 가장 최근 ZIP 선택
+      # ---------------------------------------------------------
+      - name: Find uploaded ZIP
+        id: zip
+        shell: bash
+        run: |
+          ZIP_FILE=$(find upload -maxdepth 1 -type f -name "*.zip" -printf "%T@ %p\n" \
+            | sort -nr \
+            | head -1 \
+            | cut -d' ' -f2-)
+
+          if [ -z "$ZIP_FILE" ]; then
+            echo "ZIP file not found"
+            exit 1
+          fi
+
+          echo "ZIP_FILE=$ZIP_FILE" >> "$GITHUB_OUTPUT"
+          echo "Selected ZIP: $ZIP_FILE"
+
+      # ---------------------------------------------------------
+      # 3. 압축 해제
+      # ---------------------------------------------------------
+      - name: Extract ZIP
+        shell: bash
+        run: |
+          rm -rf extracted
+          mkdir -p extracted
+
+          unzip -q "${{ steps.zip.outputs.ZIP_FILE }}" -d extracted
+
+          echo "===== Extracted files ====="
+          find extracted -maxdepth 3 -type f | head -100
+
+      # ---------------------------------------------------------
+      # 4. Android 프로젝트 루트 자동 탐색
+      #
+      # ZIP 구조가:
+      #
+      # zip
+      # └─ WineArcadeX_xxx
+      #    ├─ settings.gradle
+      #    └─ app
+      #
+      # 또는
+      #
+      # zip
+      # ├─ settings.gradle
+      # └─ app
+      #
+      # 둘 다 처리
+      # ---------------------------------------------------------
+      - name: Find Gradle project
+        id: project
+        shell: bash
+        run: |
+          SETTINGS_FILE=$(find extracted \
+            \( -name "settings.gradle" -o -name "settings.gradle.kts" \) \
+            -type f \
+            | head -1)
+
+          if [ -z "$SETTINGS_FILE" ]; then
+            echo "settings.gradle not found"
+            exit 1
+          fi
+
+          PROJECT_DIR=$(dirname "$SETTINGS_FILE")
+
+          echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_OUTPUT"
+
+          echo "Android project:"
+          echo "$PROJECT_DIR"
+
+          ls -la "$PROJECT_DIR"
+
+      # ---------------------------------------------------------
+      # 5. Java
+      # ---------------------------------------------------------
+      - name: Set up JDK 17
+        uses: actions/setup-java@v6
         with:
           distribution: temurin
           java-version: '17'
 
-      - name: Android SDK
+      # ---------------------------------------------------------
+      # 6. Android SDK
+      # ---------------------------------------------------------
+      - name: Set up Android SDK
         uses: android-actions/setup-android@v4
         with:
           packages: ''
 
-      - name: Install SDK packages
-        run: sdkmanager "platform-tools" "platforms;android-35" "build-tools;35.0.0"
+      - name: Install Android packages
+        shell: bash
+        run: |
+          yes | sdkmanager --licenses > /dev/null || true
 
-      - name: Gradle 8.9
+          sdkmanager \
+            "platform-tools" \
+            "platforms;android-35" \
+            "build-tools;35.0.0"
+
+      # ---------------------------------------------------------
+      # 7. Gradle
+      # ---------------------------------------------------------
+      - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '8.9'
 
-      - name: Build
-        run: gradle --no-daemon assembleDebug
+      # ---------------------------------------------------------
+      # 8. 빌드
+      #
+      # gradlew가 ZIP에 있으면 wrapper 우선 사용
+      # 없으면 설치한 Gradle 8.9 사용
+      # ---------------------------------------------------------
+      - name: Build APK
+        shell: bash
+        working-directory: ${{ steps.project.outputs.PROJECT_DIR }}
+        run: |
+          if [ -f "./gradlew" ]; then
+            chmod +x ./gradlew
+            ./gradlew --no-daemon clean assembleDebug
+          else
+            gradle --no-daemon clean assembleDebug
+          fi
 
+      # ---------------------------------------------------------
+      # 9. APK 확인
+      # ---------------------------------------------------------
+      - name: Find APK
+        id: apk
+        shell: bash
+        run: |
+          PROJECT_DIR="${{ steps.project.outputs.PROJECT_DIR }}"
+
+          APK=$(find "$PROJECT_DIR" \
+            -type f \
+            -path "*/build/outputs/apk/debug/*.apk" \
+            | head -1)
+
+          if [ -z "$APK" ]; then
+            echo "APK not found"
+            exit 1
+          fi
+
+          echo "APK=$APK" >> "$GITHUB_OUTPUT"
+
+          echo "Generated APK:"
+          ls -lh "$APK"
+
+      # ---------------------------------------------------------
+      # 10. APK Artifact 업로드
+      # ---------------------------------------------------------
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
           name: WineArcadeX-debug-apk
-          path: app/build/outputs/apk/debug/app-debug.apk
+          path: ${{ steps.apk.outputs.APK }}
           if-no-files-found: error
