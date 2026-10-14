@@ -6,113 +6,438 @@ on:
       - 'upload/*.zip'
 
   workflow_dispatch:
+    inputs:
+      zip_file:
+        description: '빌드할 ZIP 파일명 (비워두면 자동으로 최신 ZIP 선택)'
+        required: false
+        type: string
+
+# 같은 브랜치에 ZIP을 연속 업로드하면
+# 이전 빌드는 취소하고 가장 최근 빌드만 수행
+concurrency:
+  group: android-zip-build-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   build:
     runs-on: ubuntu-latest
 
     steps:
-      # ---------------------------------------------------------
-      # 1. Repository checkout
-      # ---------------------------------------------------------
-      - name: Checkout repository
-        uses: actions/checkout@v6
 
-      # ---------------------------------------------------------
-      # 2. 가장 최근 ZIP 선택
-      # ---------------------------------------------------------
+      # =========================================================
+      # 1. Repository checkout
+      # Git 이력 기반 ZIP 탐색을 위해 전체 history checkout
+      # =========================================================
+      - name: Checkout repository
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+
+      # =========================================================
+      # 2. 빌드할 ZIP 선택
+      #
+      # 우선순위
+      #
+      # 1) workflow_dispatch 직접 지정
+      # 2) 현재 push에서 변경된 ZIP
+      # 3) upload 폴더 전체 중 Git 기준 최신 ZIP
+      #
+      # 파일 mtime은 사용하지 않음
+      # =========================================================
       - name: Find uploaded ZIP
         id: zip
         shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          BEFORE_SHA: ${{ github.event.before }}
+          AFTER_SHA: ${{ github.sha }}
+          MANUAL_ZIP: ${{ inputs.zip_file }}
         run: |
-          ZIP_FILE=$(find upload -maxdepth 1 -type f -name "*.zip" -printf "%T@ %p\n" \
-            | sort -nr \
-            | head -1 \
-            | cut -d' ' -f2-)
+          set -euo pipefail
 
-          if [ -z "$ZIP_FILE" ]; then
-            echo "ZIP file not found"
+          echo "========================================"
+          echo " ZIP AUTO SELECTOR"
+          echo "========================================"
+          echo "Event : $EVENT_NAME"
+          echo "SHA   : $AFTER_SHA"
+          echo
+
+          if [ ! -d "upload" ]; then
+            echo "::error::upload directory not found"
             exit 1
           fi
 
-          echo "ZIP_FILE=$ZIP_FILE" >> "$GITHUB_OUTPUT"
-          echo "Selected ZIP: $ZIP_FILE"
 
-      # ---------------------------------------------------------
+          # -----------------------------------------------------
+          # 함수:
+          # 파일 목록 중 Git commit 시간이 가장 최근인 파일 선택
+          # -----------------------------------------------------
+          select_latest_by_git() {
+
+            local BEST_FILE=""
+            local BEST_TIME=0
+
+            while IFS= read -r FILE
+            do
+              [ -z "$FILE" ] && continue
+              [ ! -f "$FILE" ] && continue
+
+              COMMIT_TIME=$(git log -1 \
+                --format="%ct" \
+                -- "$FILE" 2>/dev/null || echo "0")
+
+              COMMIT_HASH=$(git log -1 \
+                --format="%h" \
+                -- "$FILE" 2>/dev/null || echo "unknown")
+
+              COMMIT_DATE=$(git log -1 \
+                --format="%ci" \
+                -- "$FILE" 2>/dev/null || echo "unknown")
+
+              echo "Candidate:"
+              echo "  file   = $FILE"
+              echo "  commit = $COMMIT_HASH"
+              echo "  date   = $COMMIT_DATE"
+              echo
+
+              if [ "$COMMIT_TIME" -ge "$BEST_TIME" ]; then
+                BEST_TIME="$COMMIT_TIME"
+                BEST_FILE="$FILE"
+              fi
+
+            done
+
+            echo "$BEST_FILE"
+          }
+
+
+          ZIP_FILE=""
+
+
+          # =====================================================
+          # CASE 1
+          # workflow_dispatch에서 ZIP 직접 지정
+          # =====================================================
+          if [ "$EVENT_NAME" = "workflow_dispatch" ] \
+             && [ -n "${MANUAL_ZIP:-}" ]; then
+
+            echo "[MODE] Manual ZIP selection"
+
+            # upload/를 입력하지 않은 경우 자동 추가
+            if [[ "$MANUAL_ZIP" == upload/* ]]; then
+              ZIP_FILE="$MANUAL_ZIP"
+            else
+              ZIP_FILE="upload/$MANUAL_ZIP"
+            fi
+
+            # upload 폴더 외부 접근 방지
+            if [[ "$ZIP_FILE" != upload/*.zip ]]; then
+              echo "::error::Only upload/*.zip files are allowed"
+              exit 1
+            fi
+
+            if [ ! -f "$ZIP_FILE" ]; then
+              echo "::error::ZIP file not found: $ZIP_FILE"
+              exit 1
+            fi
+
+
+          # =====================================================
+          # CASE 2
+          # Push 이벤트
+          #
+          # 이번 push에서 실제 추가/수정된 ZIP을 찾음
+          # =====================================================
+          elif [ "$EVENT_NAME" = "push" ]; then
+
+            echo "[MODE] Push change detection"
+
+            CHANGED_ZIPS=""
+
+            # before SHA가 정상적인 경우
+            if [ -n "${BEFORE_SHA:-}" ] \
+               && [[ ! "$BEFORE_SHA" =~ ^0+$ ]] \
+               && git cat-file -e "${BEFORE_SHA}^{commit}" 2>/dev/null; then
+
+              CHANGED_ZIPS=$(git diff \
+                --name-only \
+                --diff-filter=AMR \
+                "$BEFORE_SHA" \
+                "$AFTER_SHA" \
+                -- 'upload/*.zip' || true)
+
+            else
+
+              echo "Previous SHA unavailable."
+              echo "Checking current commit only."
+
+              CHANGED_ZIPS=$(git diff-tree \
+                --no-commit-id \
+                --name-only \
+                -r \
+                --diff-filter=AMR \
+                "$AFTER_SHA" \
+                -- 'upload/*.zip' || true)
+
+            fi
+
+
+            echo
+            echo "===== ZIP changed in this push ====="
+
+            if [ -n "$CHANGED_ZIPS" ]; then
+
+              echo "$CHANGED_ZIPS"
+              echo
+
+              ZIP_COUNT=$(echo "$CHANGED_ZIPS" \
+                | sed '/^[[:space:]]*$/d' \
+                | wc -l)
+
+              echo "Changed ZIP count: $ZIP_COUNT"
+
+
+              # 한 개만 변경됐으면 바로 사용
+              if [ "$ZIP_COUNT" -eq 1 ]; then
+
+                ZIP_FILE=$(echo "$CHANGED_ZIPS" | head -1)
+
+              else
+
+                echo
+                echo "Multiple ZIPs detected."
+                echo "Selecting latest by Git history..."
+
+                ZIP_FILE=$(printf '%s\n' "$CHANGED_ZIPS" \
+                  | select_latest_by_git \
+                  | tail -1)
+
+              fi
+
+            fi
+
+          fi
+
+
+          # =====================================================
+          # CASE 3
+          # 자동 탐색 fallback
+          #
+          # upload 폴더 전체에서 Git 기준 최신 ZIP 선택
+          # =====================================================
+          if [ -z "$ZIP_FILE" ]; then
+
+            echo
+            echo "[MODE] Repository latest ZIP fallback"
+
+            ALL_ZIPS=$(find upload \
+              -maxdepth 1 \
+              -type f \
+              -name "*.zip" \
+              -print \
+              | sort)
+
+            if [ -z "$ALL_ZIPS" ]; then
+              echo "::error::No ZIP files found in upload/"
+              exit 1
+            fi
+
+            ZIP_FILE=$(printf '%s\n' "$ALL_ZIPS" \
+              | select_latest_by_git \
+              | tail -1)
+
+          fi
+
+
+          # =====================================================
+          # 최종 파일 검증
+          # =====================================================
+          if [ -z "$ZIP_FILE" ]; then
+            echo "::error::Unable to determine ZIP file"
+            exit 1
+          fi
+
+          if [ ! -f "$ZIP_FILE" ]; then
+            echo "::error::Selected ZIP does not exist: $ZIP_FILE"
+            exit 1
+          fi
+
+
+          echo
+          echo "========================================"
+          echo " SELECTED ZIP"
+          echo "========================================"
+          echo "$ZIP_FILE"
+
+
+          # -----------------------------------------------------
+          # ZIP 파일 자체가 정상인지 검사
+          # -----------------------------------------------------
+          echo
+          echo "Testing ZIP integrity..."
+
+          if ! unzip -t "$ZIP_FILE" > /dev/null; then
+            echo "::error::Invalid or corrupted ZIP: $ZIP_FILE"
+            exit 1
+          fi
+
+          echo "ZIP integrity: OK"
+
+
+          # -----------------------------------------------------
+          # Git 정보
+          # -----------------------------------------------------
+          ZIP_COMMIT=$(git log -1 --format="%h" -- "$ZIP_FILE")
+          ZIP_DATE=$(git log -1 --format="%ci" -- "$ZIP_FILE")
+
+          echo
+          echo "Commit : $ZIP_COMMIT"
+          echo "Date   : $ZIP_DATE"
+
+          echo "ZIP_FILE=$ZIP_FILE" >> "$GITHUB_OUTPUT"
+          echo "ZIP_COMMIT=$ZIP_COMMIT" >> "$GITHUB_OUTPUT"
+          echo "ZIP_DATE=$ZIP_DATE" >> "$GITHUB_OUTPUT"
+
+
+          # -----------------------------------------------------
+          # Actions Summary
+          # -----------------------------------------------------
+          {
+            echo "## 📦 Android ZIP Build"
+            echo ""
+            echo "| Item | Value |"
+            echo "|---|---|"
+            echo "| ZIP | \`$ZIP_FILE\` |"
+            echo "| Commit | \`$ZIP_COMMIT\` |"
+            echo "| Date | $ZIP_DATE |"
+            echo "| Trigger | $EVENT_NAME |"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+
+      # =========================================================
       # 3. 압축 해제
-      # ---------------------------------------------------------
+      # =========================================================
       - name: Extract ZIP
         shell: bash
         run: |
+          set -euo pipefail
+
           rm -rf extracted
           mkdir -p extracted
 
-          unzip -q "${{ steps.zip.outputs.ZIP_FILE }}" -d extracted
+          echo "Extracting:"
+          echo "${{ steps.zip.outputs.ZIP_FILE }}"
 
+          unzip -q \
+            "${{ steps.zip.outputs.ZIP_FILE }}" \
+            -d extracted
+
+          echo
           echo "===== Extracted files ====="
-          find extracted -maxdepth 3 -type f | head -100
 
-      # ---------------------------------------------------------
-      # 4. Android 프로젝트 루트 자동 탐색
-      #
-      # ZIP 구조가:
-      #
-      # zip
-      # └─ WineArcadeX_xxx
-      #    ├─ settings.gradle
-      #    └─ app
-      #
-      # 또는
-      #
-      # zip
-      # ├─ settings.gradle
-      # └─ app
-      #
-      # 둘 다 처리
-      # ---------------------------------------------------------
+          find extracted \
+            -maxdepth 3 \
+            -type f \
+            | sort \
+            | head -100
+
+
+      # =========================================================
+      # 4. Android Gradle 프로젝트 자동 탐색
+      # =========================================================
       - name: Find Gradle project
         id: project
         shell: bash
         run: |
-          SETTINGS_FILE=$(find extracted \
-            \( -name "settings.gradle" -o -name "settings.gradle.kts" \) \
-            -type f \
-            | head -1)
+          set -euo pipefail
 
-          if [ -z "$SETTINGS_FILE" ]; then
-            echo "settings.gradle not found"
+          mapfile -t SETTINGS_FILES < <(
+            find extracted \
+              \( \
+                -name "settings.gradle" \
+                -o \
+                -name "settings.gradle.kts" \
+              \) \
+              -type f \
+              | sort
+          )
+
+          COUNT=${#SETTINGS_FILES[@]}
+
+          echo "Gradle projects found: $COUNT"
+
+          if [ "$COUNT" -eq 0 ]; then
+            echo "::error::settings.gradle not found"
             exit 1
           fi
 
-          PROJECT_DIR=$(dirname "$SETTINGS_FILE")
+          if [ "$COUNT" -gt 1 ]; then
+
+            echo "::warning::Multiple Gradle projects found."
+
+            printf '%s\n' "${SETTINGS_FILES[@]}"
+
+            echo "Selecting first Android project containing app/"
+
+            PROJECT_DIR=""
+
+            for SETTINGS_FILE in "${SETTINGS_FILES[@]}"
+            do
+              DIR=$(dirname "$SETTINGS_FILE")
+
+              if [ -d "$DIR/app" ]; then
+                PROJECT_DIR="$DIR"
+                break
+              fi
+            done
+
+            if [ -z "$PROJECT_DIR" ]; then
+              PROJECT_DIR=$(dirname "${SETTINGS_FILES[0]}")
+            fi
+
+          else
+
+            PROJECT_DIR=$(dirname "${SETTINGS_FILES[0]}")
+
+          fi
+
+
+          echo
+          echo "========================================"
+          echo " ANDROID PROJECT"
+          echo "========================================"
+          echo "$PROJECT_DIR"
 
           echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_OUTPUT"
 
-          echo "Android project:"
-          echo "$PROJECT_DIR"
-
           ls -la "$PROJECT_DIR"
 
-      # ---------------------------------------------------------
+
+      # =========================================================
       # 5. Java
-      # ---------------------------------------------------------
+      # =========================================================
       - name: Set up JDK 17
         uses: actions/setup-java@v6
         with:
           distribution: temurin
           java-version: '17'
 
-      # ---------------------------------------------------------
+
+      # =========================================================
       # 6. Android SDK
-      # ---------------------------------------------------------
+      # =========================================================
       - name: Set up Android SDK
         uses: android-actions/setup-android@v4
         with:
           packages: ''
 
+
       - name: Install Android packages
         shell: bash
         run: |
+          set -euo pipefail
+
           yes | sdkmanager --licenses > /dev/null || true
 
           sdkmanager \
@@ -120,61 +445,115 @@ jobs:
             "platforms;android-35" \
             "build-tools;35.0.0"
 
-      # ---------------------------------------------------------
+
+      # =========================================================
       # 7. Gradle
-      # ---------------------------------------------------------
+      # =========================================================
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '8.9'
 
-      # ---------------------------------------------------------
-      # 8. 빌드
-      #
-      # gradlew가 ZIP에 있으면 wrapper 우선 사용
-      # 없으면 설치한 Gradle 8.9 사용
-      # ---------------------------------------------------------
+
+      # =========================================================
+      # 8. APK Build
+      # =========================================================
       - name: Build APK
         shell: bash
         working-directory: ${{ steps.project.outputs.PROJECT_DIR }}
         run: |
+          set -euo pipefail
+
+          echo "========================================"
+          echo " BUILD"
+          echo "========================================"
+
           if [ -f "./gradlew" ]; then
+
+            echo "Using Gradle Wrapper"
+
             chmod +x ./gradlew
-            ./gradlew --no-daemon clean assembleDebug
+
+            ./gradlew \
+              --no-daemon \
+              clean \
+              assembleDebug
+
           else
-            gradle --no-daemon clean assembleDebug
+
+            echo "Using Gradle 8.9"
+
+            gradle \
+              --no-daemon \
+              clean \
+              assembleDebug
+
           fi
 
-      # ---------------------------------------------------------
-      # 9. APK 확인
-      # ---------------------------------------------------------
+
+      # =========================================================
+      # 9. APK 탐색
+      # =========================================================
       - name: Find APK
         id: apk
         shell: bash
         run: |
+          set -euo pipefail
+
           PROJECT_DIR="${{ steps.project.outputs.PROJECT_DIR }}"
 
-          APK=$(find "$PROJECT_DIR" \
-            -type f \
-            -path "*/build/outputs/apk/debug/*.apk" \
-            | head -1)
+          mapfile -t APKS < <(
+            find "$PROJECT_DIR" \
+              -type f \
+              -path "*/build/outputs/apk/debug/*.apk" \
+              | sort
+          )
 
-          if [ -z "$APK" ]; then
-            echo "APK not found"
+          if [ "${#APKS[@]}" -eq 0 ]; then
+            echo "::error::APK not found"
             exit 1
           fi
 
-          echo "APK=$APK" >> "$GITHUB_OUTPUT"
 
-          echo "Generated APK:"
+          echo "===== APK files ====="
+
+          printf '%s\n' "${APKS[@]}"
+
+
+          # app-debug.apk 우선
+          APK=""
+
+          for FILE in "${APKS[@]}"
+          do
+            if [[ "$FILE" == */app-debug.apk ]]; then
+              APK="$FILE"
+              break
+            fi
+          done
+
+
+          # 없으면 첫 번째 APK
+          if [ -z "$APK" ]; then
+            APK="${APKS[0]}"
+          fi
+
+
+          echo
+          echo "Selected APK:"
+          echo "$APK"
+
           ls -lh "$APK"
 
-      # ---------------------------------------------------------
-      # 10. APK Artifact 업로드
-      # ---------------------------------------------------------
+          echo "APK=$APK" >> "$GITHUB_OUTPUT"
+
+
+      # =========================================================
+      # 10. APK Artifact
+      # =========================================================
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: WineArcadeX-debug-apk
+          name: WineArcadeX-debug-apk-${{ github.run_number }}
           path: ${{ steps.apk.outputs.APK }}
           if-no-files-found: error
+          retention-days: 14
